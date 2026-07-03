@@ -1,6 +1,25 @@
 const Split = require('../models/Split');
 const asyncHandler = require('../utils/asyncHandler');
 
+const getAllowedCashbookUserIds = (cashbook) => [
+  cashbook.owner.toString(),
+  ...(cashbook.members || []).map((member) => member.user.toString()),
+];
+
+const validateSplitUsers = (cashbook, paidBy, members) => {
+  const allowedUserIds = new Set(getAllowedCashbookUserIds(cashbook));
+  if (!allowedUserIds.has(String(paidBy))) {
+    return 'Paid by must be a user in this cashbook.';
+  }
+
+  const invalidMember = members.find((m) => !m.userId || !allowedUserIds.has(String(m.userId)));
+  if (invalidMember) {
+    return 'Split members must be accepted users in this cashbook.';
+  }
+
+  return null;
+};
+
 // @desc    Get splits for cashbook
 // @route   GET /api/cashbooks/:id/splits
 // @access  Private
@@ -32,6 +51,15 @@ const getSplit = asyncHandler(async (req, res) => {
 // @access  Private (member or owner)
 const createSplit = asyncHandler(async (req, res) => {
   const { title, totalAmount, paidBy, paidByName, members, splitType, description } = req.body;
+
+  if (!Array.isArray(members) || members.length === 0) {
+    return res.status(400).json({ success: false, message: 'Add at least one cashbook member to the split.' });
+  }
+
+  const userError = validateSplitUsers(req.cashbook, paidBy, members);
+  if (userError) {
+    return res.status(400).json({ success: false, message: userError });
+  }
 
   // Validate members shares sum
   const memberTotal = members.reduce((sum, m) => sum + parseFloat(m.share), 0);
@@ -81,6 +109,10 @@ const updateSplit = asyncHandler(async (req, res) => {
   if (paidBy !== undefined) split.paidBy = paidBy;
   if (paidByName !== undefined) split.paidByName = paidByName;
   if (members !== undefined) {
+    const userError = validateSplitUsers(req.cashbook, split.paidBy, members);
+    if (userError) {
+      return res.status(400).json({ success: false, message: userError });
+    }
     split.members = members.map((m) => ({
       user: m.userId || null,
       name: m.name,
